@@ -6,6 +6,8 @@
   <title>AWS Cloud Practitioner Practice Exam</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <!-- Markdown parser for AI explanations -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f9; color: #333; line-height: 1.6; }
@@ -18,22 +20,40 @@
     ul.options label { display: flex; align-items: center; padding: 0.75rem 1rem; border: 1px solid #d1d5db; border-radius: 0.375rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
     ul.options label:hover { background-color: #e2e8f0; border-color: #cbd5e1; }
     ul.options input { margin-right: 0.75rem; accent-color: #3b82f6; }
-    .btn { display: inline-block; padding: 0.75rem 1.5rem; font-size: 1rem; font-weight: 600; text-align: center; border: none; border-radius: 0.375rem; background-color: #3b82f6; color: #fff; cursor: pointer; transition: background 0.2s; margin-top: 1rem; }
+    .btn { display: inline-block; padding: 0.5rem 1rem; font-size: 0.9rem; font-weight: 600; text-align: center; border: none; border-radius: 0.375rem; background-color: #3b82f6; color: #fff; cursor: pointer; transition: background 0.2s; margin: 0.5rem; }
     .btn:disabled { background-color: #93c5fd; cursor: not-allowed; }
     .btn:hover:not(:disabled) { background-color: #2563eb; }
     .correct { color: #16a34a; font-weight: 600; }
     .wrong { color: #dc2626; font-weight: 600; }
     .results { margin-top: 2rem; }
     .results .answers { margin-left: 1rem; font-size: 0.95rem; }
+    .study-guide { background: #fff; border-radius: 0.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 1.5rem; margin-top: 1rem; }
     .credits { text-align: center; font-size: 0.8rem; color: #666; margin-top: 2rem; }
-    @media (max-width: 480px) { .btn { width: 100%; } .question-box { padding: 1rem; } }
+    .settings-panel { background: #fff; padding: 1rem; border: 1px solid #d1d5db; border-radius: 0.375rem; margin-bottom: 1rem; }
+    .ai-explanation { margin-top: 1rem; }
+    @media (max-width: 480px) { .btn { width: 100%; margin: 0.25rem 0; } .question-box, .study-guide { padding: 1rem; } }
   </style>
 </head>
 <body>
   <div id="app" class="container">
-    <h1>AWS Cloud Practitioner Practice Exam</h1>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h1>AWS Cloud Practitioner Practice Exam</h1>
+      <button class="btn" @click="toggleSettings">Settings</button>
+    </div>
+
+    <!-- Settings Panel -->
+    <div v-if="showSettings" class="settings-panel">
+      <h3>Settings</h3>
+      <label for="aiKey">Google Gemini AI Key:</label>
+      <input id="aiKey" type="text" v-model="aiKey" placeholder="Enter your API key" style="width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ccc; border-radius: 0.25rem;">
+      <button class="btn" @click="saveKey">Save</button>
+    </div>
+
+    <!-- Loading/Error -->
     <div v-if="loading"><p>Loading questions...</p></div>
     <div v-else-if="!loading && examQuestions.length === 0"><p>Error: No questions loaded. Please refresh.</p></div>
+
+    <!-- Quiz -->
     <div v-else-if="!finished">
       <div v-if="currentQuestion" class="question-box">
         <p>Question {{ currentIndex + 1 }} of {{ examQuestions.length }}</p>
@@ -59,12 +79,16 @@
         </form>
         <div v-if="submitted">
           <p v-if="isAnswerCorrect" class="correct">Correct!</p>
-          <p v-else class="wrong">Wrong! The correct answer: {{ currentQuestion.options.filter(o => currentQuestion.correctAnswers.includes(o.id)).map(o => o.text).join(', ') }}</p>
+          <p v-else class="wrong">Wrong! The correct answer: {{ correctText }}</p>
+          <div v-if="!isAnswerCorrect && aiExplanationHtml" class="ai-explanation" v-html="aiExplanationHtml"></div>
+          <!-- Next Question button always visible after submission -->
           <button class="btn" @click="nextQuestion">Next Question</button>
         </div>
       </div>
       <div class="results"><p>Score: {{ score.correct }} / {{ score.attempted }} ({{ scorePercentage }}%)</p></div>
     </div>
+
+    <!-- Summary & Study Guide -->
     <div v-else>
       <h2>Exam Complete!</h2>
       <p>Your score: {{ scorePercentage }}% - <span :class="scorePercentage >= 70 ? 'correct' : 'wrong'">{{ scorePercentage >= 70 ? 'Pass' : 'Fail' }}</span></p>
@@ -85,12 +109,19 @@
             <div class="answers">Your answer: {{ item.userAnswer.join(', ') }}<br>Correct: {{ item.correctAnswers.join(', ') }}</div>
           </li>
         </ul>
+        <!-- Generate Study Guide -->
+        <button class="btn" @click="generateStudyGuide" :disabled="studyGuideLoading || !aiKey">
+          {{ studyGuideLoading ? 'Generating Study Guide...' : 'Generate Study Guide' }}
+        </button>
+        <div v-if="studyGuideHtml" class="study-guide" v-html="studyGuideHtml"></div>
       </div>
     </div>
+
+    <!-- Credits -->
     <div class="credits">
-        This is a simple web scraper that makes an interactive version of the questions courtesy of kananinirav's <a href="https://github.com/kananinirav/AWS-Certified-Cloud-Practitioner-Notes/tree/c21f9562a397f540c3ae9fff16ac35905dd72bd4" target="_blank" rel="noopener">AWS-Certified-Cloud-Practitioner-Notes</a>. Please check out the source repo for more information!
-      </div>
+      This interactive quiz uses questions courtesy of <a href="https://github.com/kananinirav/AWS-Certified-Cloud-Practitioner-Notes/tree/c21f9562a397f540c3ae9fff16ac35905dd72bd4" target="_blank" rel="noopener">kananinirav's AWS-Certified-Cloud-Practitioner-Notes</a>.
     </div>
+  </div>
 
   <script>
     const { createApp } = Vue;
@@ -101,7 +132,9 @@
           selectedAnswers: [], selectedAnswer: null,
           submitted: false, finished: false,
           score: { correct: 0, attempted: 0 },
-          detailedResults: [], loading: true
+          detailedResults: [], loading: true,
+          showSettings: false, aiKey: '', aiExplanationHtml: '',
+          studyGuideHtml: '', studyGuideLoading: false
         };
       },
       computed: {
@@ -119,19 +152,21 @@
           const correct = [], wrong = [];
           this.detailedResults.forEach(item => item.isCorrect ? correct.push(item) : wrong.push(item));
           return { correct, wrong };
+        },
+        correctText() {
+          if (!this.currentQuestion) return ''; return this.currentQuestion.options.filter(o => this.currentQuestion.correctAnswers.includes(o.id)).map(o => o.text).join(', ');
         }
       },
       methods: {
+        toggleSettings() { this.showSettings = !this.showSettings; },
+        saveKey() { localStorage.setItem('aiKey', this.aiKey); this.showSettings = false; },
         async loadQuestions() {
+          const storedKey = localStorage.getItem('aiKey'); if (storedKey) this.aiKey = storedKey;
           const cached = localStorage.getItem('allQuestions');
-          if (cached) {
-            try { this.allQuestions = JSON.parse(cached); } catch { await this.fetchAllQuestions(); }
-          } else { await this.fetchAllQuestions(); }
-          const unique = [];
-          const seen = new Set();
+          if (cached) { try { this.allQuestions = JSON.parse(cached); } catch { await this.fetchAllQuestions(); } } else { await this.fetchAllQuestions(); }
+          const unique = []; const seen = new Set();
           this.allQuestions.forEach(q => { if (!seen.has(q.question)) { seen.add(q.question); unique.push(q); }});
-          this.examQuestions = this.getRandomSubset(unique, 65);
-          this.loading = false;
+          this.examQuestions = this.getRandomSubset(unique, 65); this.loading = false;
         },
         async fetchAllQuestions() {
           const promises = [];
@@ -146,8 +181,7 @@
           const questions = [];
           const blocks = md.split(/\n(?=\d+\.\s)/);
           blocks.forEach(block => {
-            const lines = block.split('\n').map(l => l.trim());
-            if (!lines.length) return;
+            const lines = block.split('\n').map(l => l.trim()); if (!lines.length) return;
             const qText = lines[0].replace(/^\d+\.\s*/, '');
             const opts = lines.reduce((arr, l) => { const m = l.match(/^-+\s*([A-Z])\.\s*(.+)$/); if (m) arr.push({ id: m[1], text: m[2] }); return arr; }, []);
             let correct = [];
@@ -156,17 +190,49 @@
           });
           return questions;
         },
-        submitAnswer() {
+        async submitAnswer() {
           if (!this.userSelected.length) return alert('Select at least one answer.');
-          this.submitted = true;
-          this.score.attempted++;
+          this.submitted = true; this.score.attempted++;
           const userText = this.currentQuestion.options.filter(o => this.userSelected.includes(o.id)).map(o => o.text);
-          const correctText = this.currentQuestion.options.filter(o => this.currentQuestion.correctAnswers.includes(o.id)).map(o => o.text);
-          const result = { question: this.currentQuestion.question, userAnswer: userText, correctAnswers: correctText, isCorrect: this.isAnswerCorrect };
-          if (result.isCorrect) this.score.correct++;
-          this.detailedResults.push(result);
+          const correctTextArr = this.currentQuestion.options.filter(o => this.currentQuestion.correctAnswers.includes(o.id)).map(o => o.text);
+          if (!this.isAnswerCorrect && this.aiKey) await this.fetchAIExplanation(this.currentQuestion.question, userText.join(', '), correctTextArr.join(', ')); else this.aiExplanationHtml = '';
+          if (this.isAnswerCorrect) this.score.correct++;
+          this.detailedResults.push({ question: this.currentQuestion.question, userAnswer: userText, correctAnswers: correctTextArr, isCorrect: this.isAnswerCorrect });
         },
-        nextQuestion() { this.selectedAnswers = []; this.selectedAnswer = null; this.submitted = false; if (this.currentIndex < this.examQuestions.length - 1) this.currentIndex++; else this.finished = true; },
+        async fetchAIExplanation(question, userAns, correctAns) {
+          this.aiExplanationHtml = '<p>Fetching explanation...</p>';
+          try {
+            const prompt = `Question: ${question}\nYour answer: ${userAns}\nCorrect answer: ${correctAns}\nExplain why the selected answer is incorrect in markdown.`;
+            const res = await axios.post(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.aiKey}`,
+              { contents:[{ role:'user', parts:[{ text: prompt }]}] }
+            );
+            const md = res.data.candidates[0].content.parts[0].text;
+            this.aiExplanationHtml = marked.parse(md);
+          } catch (err) {
+            console.error(err);
+            this.aiExplanationHtml = '<p>Unable to fetch explanation.</p>';
+          }
+        },
+        async generateStudyGuide() {
+          if (!this.aiKey) return;
+          this.studyGuideLoading = true;
+          this.studyGuideHtml = '<p>Generating study guide...</p>';
+          const wrongItems = this.groupedResults.wrong.map(item => `Q: ${item.question}\nYour answer: ${item.userAnswer.join(', ')}\nCorrect: ${item.correctAnswers.join(', ')}`).join('\n\n');
+          const prompt = `Based on the following incorrect questions and answers, generate a study guide covering the topics and content the user needs to review. Provide organized sections and bullet points in markdown.\n\n${wrongItems}`;
+          try {
+            const res = await axios.post(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.aiKey}`,
+              { contents:[{ role:'user', parts:[{ text: prompt }]}] }
+            );
+            const md = res.data.candidates[0].content.parts[0].text;
+            this.studyGuideHtml = marked.parse(md);
+          } catch (err) {
+            console.error(err);
+            this.studyGuideHtml = '<p>Unable to generate study guide.</p>';
+          } finally { this.studyGuideLoading = false; }
+        },
+        nextQuestion() { this.selectedAnswers = []; this.selectedAnswer = null; this.submitted = false; this.aiExplanationHtml = ''; if (this.currentIndex < this.examQuestions.length - 1) this.currentIndex++; else this.finished = true; },
         getRandomSubset(array, count) { return [...array].sort(() => 0.5 - Math.random()).slice(0, Math.min(count, array.length)); }
       },
       mounted() { this.loadQuestions(); }
